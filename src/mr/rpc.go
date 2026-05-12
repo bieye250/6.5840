@@ -21,3 +21,24 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type GetTask struct {
+	FileName string
+	Version int
+	ReduceId int
+}
+type TaskReply struct {
+	MapFileName string
+	Status TaskArgs
+	ReduceFileNames []string
+	Version int
+	ReduceId int
+}
+
+type TaskArgs int
+
+const (
+	Finish TaskArgs = iota
+	MapTask
+	ReduceTask
+	Wait
+)

@@ -1,11 +1,16 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "os"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+	"strconv"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -23,44 +28,149 @@ func ihash(key string) int {
 
 var coordSockName string // socket for coordinator
 
+const nReduce = 10
+
+type ByKey []KeyValue
+
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // main/mrworker.go calls this function.
 func Worker(sockname string, mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	coordSockName = sockname
+	var fileName string
+	var reduceId int
+	var version int
 
-	// Your worker implementation here.
+	for {
+		taskReply := CallTask(fileName, reduceId, version)
+		if taskReply == nil || taskReply.Status == Finish {
+			return
+		}
+		fileName = taskReply.MapFileName
+		reduceId = taskReply.ReduceId
+		version = taskReply.Version
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+		switch taskReply.Status {
+		// map task
+		case MapTask:
+			mapTask(fileName, mapf, version)
+
+		// reduce task
+		case ReduceTask:
+			reducetask(reducef, reduceId, taskReply.ReduceFileNames)
+		case Wait:
+			time.Sleep(time.Second)
+		}
+	}
 
 }
 
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func CallExample() {
+func CallTask(fileName string, reduceId int, version int) *TaskReply {
+	args := GetTask{
+		FileName: fileName,
+		ReduceId: reduceId,
+		Version:  version,
+	}
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+	reply := TaskReply{}
+	ok := call("Coordinator.GetTask", &args, &reply)
 
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
 	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
+		return &reply
+	}
+	return nil
+}
+
+func mapTask(filename string, mapf func(string, string) []KeyValue, version int) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+
+	kva := mapf(filename, string(content))
+	files := make(map[int]*os.File)
+	encoders := make(map[int]*json.Encoder)
+
+	for _, kv := range kva {
+		hash := ihash(kv.Key) % nReduce
+		outFile, ok := files[hash]
+		if !ok {
+			outFile, err = os.OpenFile(fmt.Sprintf("%s-%d-%d", filename, version, hash), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				log.Fatalf("cannot open temp file: %v", err)
+			}
+			files[hash] = outFile
+			encoders[hash] = json.NewEncoder(outFile)
+		}
+		if err := encoders[hash].Encode(&kv); err != nil {
+			log.Fatalf("cannot write to temp file: %v", err)
+		}
+	}
+
+	for _, f := range files {
+		f.Close()
+	}
+}
+
+func reducetask(reducef func(string, []string) string, reducerId int, reduceFileNames []string) {
+	intermediate := []KeyValue{}
+
+	for _, str := range reduceFileNames {
+		fileName := fmt.Sprintf("%s-%d", str, reducerId)
+		file, err := os.Open(fileName)
+		if err != nil {
+			// log.Fatalf("cannot open %v", fileName)
+			// log.Printf("cannot open %v", err)
+			continue
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+		file.Close()
+
+	}
+
+	if len(intermediate) == 0 {
+		return
+	}
+
+	// 排序中间结果
+	sort.Sort(ByKey(intermediate))
+
+	// 创建输出文件
+	oname := "mr-out-" + strconv.Itoa(reducerId)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		log.Fatalf("cannot create output file %v", oname)
+	}
+	defer ofile.Close()
+
+	// 对每个不同的 key 调用 reduce
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// 写入输出
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
 	}
 }
 
