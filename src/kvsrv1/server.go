@@ -18,15 +18,20 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
+type Value struct {
+	Value   string
+	Version rpc.Tversion
+}
 
 type KVServer struct {
 	mu sync.Mutex
 
 	// Your definitions here.
+	keyMap map[string]Value
 }
 
 func MakeKVServer() *KVServer {
-	kv := &KVServer{}
+	kv := &KVServer{keyMap: make(map[string]Value)}
 	// Your code here.
 	return kv
 }
@@ -35,6 +40,16 @@ func MakeKVServer() *KVServer {
 // exists. Otherwise, Get returns ErrNoKey.
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 	// Your code here.
+	kv.mu.Lock()
+	value, exists := kv.keyMap[args.Key]
+	kv.mu.Unlock()
+	if !exists {
+		reply.Err = rpc.ErrNoKey
+		return
+	}
+	reply.Value = value.Value
+	reply.Version = value.Version
+	reply.Err = rpc.OK
 }
 
 // Update the value for a key if args.Version matches the version of
@@ -43,6 +58,25 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 // args.Version is 0, and returns ErrNoKey otherwise.
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 	// Your code here.
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	value, exists := kv.keyMap[args.Key]
+	if !exists {
+		if args.Version == 0 {
+			kv.keyMap[args.Key] = Value{Value: args.Value, Version: 1}
+			reply.Err = rpc.OK
+		} else {
+			reply.Err = rpc.ErrNoKey
+		}
+		return
+	}
+	
+	if value.Version != args.Version {
+		reply.Err = rpc.ErrVersion
+		return
+	}
+	kv.keyMap[args.Key] = Value{Value: args.Value, Version: value.Version + 1}
+	reply.Err = rpc.OK
 }
 
 
