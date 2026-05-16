@@ -53,6 +53,16 @@ func (lk *Lock) Release() {
 	// Your code here
 	lid, ver, err := lk.ck.Get(lk.lockname)
 	if err == rpc.OK && lid == lk.id {
-		err = lk.ck.Put(lk.lockname, unlock, ver)
+		for {
+			err = lk.ck.Put(lk.lockname, unlock, ver)
+			if err == rpc.ErrMaybe {
+				lid, _, err = lk.ck.Get(lk.lockname)
+				if err == rpc.OK && lid != lk.id {
+					return
+				}
+			} else {
+				return
+			}
+		}
 	}
 }
