@@ -23,7 +23,11 @@ Raft服务器状态:
 - 收到超过半数的Vote回复, 则成为leader, 即自身状态uptodate多数server
 - 收到≥自身term的leader请求, 自身退化follower, 否则拒绝
 - 本次没有选出leader, 随机退避一段时间后再次发起选举
-> 每轮选举中server遵守FCFS(先来先服务)原则, 最多对第一个uptodate的server投票
+> 限制:每轮选举中server遵守FCFS(先来先服务)原则, 最多对第一个up-to-date的server投票
+
+up-to-date:
+- 比较最新日志的term, 较大者获取选票; 若相同
+- 比较日志长度, 较大者获取选票
 
 ### 日志复制
 
@@ -36,5 +40,8 @@ AppendEntries携带上次追加log的index和term, follower检查自身最新log
 - 若小于leader的term则拒绝, leader递减index直至找到一致点, 覆盖follower该index之后所有log
 - 若term一致且index大于leader, 或term大于leader则拒绝, 并在之后成为leader
 
-### Lab 3A 3B
+### Lab 3A 3B 3C
 ![alt text](image-2.png)
+
+3C在后期的leader选举RPC调用中, 有上百毫秒的延迟, 导致server的Requestvote还没结束, 其它server又开始了Requestvote, 在这里卡住了5天
+![alt text](image-3.png)
