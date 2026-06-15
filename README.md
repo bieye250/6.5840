@@ -40,8 +40,13 @@ AppendEntries携带上次追加log的index和term, follower检查自身最新log
 - 若小于leader的term则拒绝, leader递减index直至找到一致点, 覆盖follower该index之后所有log
 - 若term一致且index大于leader, 或term大于leader则拒绝, 并在之后成为leader
 
-### Lab 3A 3B 3C
+### Lab 3A 3B 3C 3D
 ![alt text](image-2.png)
 
 3C在后期的leader选举RPC调用中, 有上百毫秒的延迟, 导致server的Requestvote还没结束, 其它server又开始了Requestvote, 在这里卡住了5天
 ![alt text](image-3.png)
+
+3D跑了几十次测试, 暂时没有发现问题, 所有测试比标准多将近100s, 没想到什么优化的点子<br>
+
+重新用脚本跑了下3C的TestFigure8Unreliable3C测试, 发现还是存在错误, 最后log还是难以收敛, 暂且这样吧
+![alt text](image-4.png)
